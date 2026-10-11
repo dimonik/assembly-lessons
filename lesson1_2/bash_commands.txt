@@ -1,0 +1,18 @@
+USEFUL COMMANDS
+
+
+mkdir LESSON_1_2
+sudo apt update
+sudo apt install build-essential
+gcc --version
+uname -m //aarch64
+
+
+// to build the code
+as -o simple.o simple.s
+
+ld simple.o -o simple
+
+./simple
+
+echo $?
