@@ -1,0 +1,30 @@
+USEFUL COMMANDS
+
+
+mkdir LESSON_1_4
+sudo apt update
+sudo apt install gdb
+
+
+// to build the code
+gcc -Wall -Wextra -O0 -g array.c -o array_c
+
+// to debug the code
+gdb ./array_c
+
+
+For GDB:
+
+break main — Set a breakpoint at main
+
+run — Run the application
+
+next — Execute the next line
+
+print numbers — Display the variable
+
+print &numbers[1] — Display the memory address of the element at index 1 
+
+set var numbers[7] = 333 — Modify an array element in memory so value will be 333
+
+print numbers — Display the variable
