@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Урок: массив C, AArch64 Assembly и GDB</title>
+<style>
+:root{color-scheme:light;--ink:#17263a;--blue:#174c83;--soft:#eaf2fb;--line:#d9e2ec}*{box-sizing:border-box}body{font:17px/1.65 system-ui,-apple-system,'Segoe UI',sans-serif;color:var(--ink);background:#f5f7fb;margin:0}main{max-width:940px;margin:35px auto;padding:44px 55px;background:white;box-shadow:0 8px 32px #102a4312;border-radius:14px}h1{font-size:2.15rem;line-height:1.2;color:#113b66}h2{font-size:1.55rem;margin-top:2.3em;border-bottom:2px solid var(--line);padding-bottom:9px;color:var(--blue)}h3{font-size:1.16rem;margin-top:1.7em;color:#174c83}pre{overflow-x:auto;background:#17263a;color:#f4f8ff;border-radius:9px;padding:18px 20px;font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}p code,li code,td code{background:#edf2f7;border-radius:4px;padding:2px 5px;font-size:.88em}.note{padding:14px 20px;border-left:4px solid #2e73ad;background:var(--soft);border-radius:5px}.muted{color:#586779}table{border-collapse:collapse;width:100%;margin:18px 0}th,td{border:1px solid var(--line);padding:10px 13px;text-align:left}th{background:#edf3fa}.cells{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:5px;margin:20px 0}.cell{text-align:center;border:1px solid #adc3db;border-radius:5px;padding:7px 1px}.cell b{display:block;font-size:20px}.cell small{font-size:10px;color:#61758b}.tag{display:inline-block;color:#164d84;background:#e7f0fa;padding:3px 10px;border-radius:30px;font-size:13px}.formula{text-align:center;font-size:1.15rem;padding:12px;background:#f5f8fc}footer{border-top:1px solid var(--line);margin-top:50px;padding-top:16px;color:#607085;font-size:13px}@media(max-width:700px){main{margin:0;padding:20px;border-radius:0}body{font-size:15px}.cells{gap:2px}.cell{padding:5px 0}.cell b{font-size:15px}.cell small{font-size:8px}}@media print{body{background:white}main{box-shadow:none;margin:0;max-width:none;padding:0}pre{white-space:pre-wrap;overflow-wrap:anywhere}h2,h3{break-after:avoid}}
+</style></head><body><main>
+<span class="tag">Computer Science · Ubuntu · AArch64</span>
+<h1>Массив в памяти: от языка C и Assembly до отладки через GDB</h1>
+<p class="muted">Практический урок: десять элементов массива, адреса, смещения, изменение значения 555 в памяти процесса.</p>
+<p><strong>Цель:</strong> понять, как массив расположен в оперативной памяти, где находится его начало и конец, как вычислить адрес элемента и как изменить его непосредственно с помощью Assembly или отладчика GDB.</p>
+<div class="note">Маршрут урока: C создаёт массив → мы печатаем адреса → Assembly меняет один элемент → GDB показывает и изменяет память → обсуждаем два отдельных процесса и shared memory.</div>
+<h2>Часть 1. Создаём и изучаем массив на C</h2>
+<h3>Шаг 1. Исходный файл</h3>
+<pre>mkdir array_lesson
+cd array_lesson
+nano array.c</pre>
+<p>Вставляем код:</p>
+<pre>#include &lt;stdio.h&gt;
+
+int main(void)
+{
+    int numbers[10];
+
+    // Заполняем массив числами от 0 до 9
+    for (int i = 0; i &lt; 10; i++) {
+        numbers[i] = i;
+    }
+
+    printf("Array start: %p\n", (void *)&amp;numbers[0]);
+    printf("Array end:   %p\n", (void *)&amp;numbers[10]);
+
+    printf("\nBefore Assembly:\n");
+    for (int i = 0; i &lt; 10; i++) {
+        printf("index=%d value=%d address=%p\n",
+               i, numbers[i], (void *)&amp;numbers[i]);
+    }
+
+    return 0;
+}</pre>
+<p><code>&amp;numbers[0]</code> — адрес первого элемента. <code>&amp;numbers[10]</code> — адрес сразу после последнего элемента: его допустимо вычислять, но нельзя разыменовывать как элемент массива.</p>
+<h3>Шаг 2. Компиляция и запуск</h3>
+<pre>gcc -Wall -Wextra -O0 -g array.c -o array_c
+./array_c</pre>
+<p>Пример результата (адреса условные):</p>
+<pre>Array start: 0xffffc120
+Array end:   0xffffc148
+
+Before Assembly:
+index=0 value=0 address=0xffffc120
+index=1 value=1 address=0xffffc124
+...
+index=8 value=8 address=0xffffc140
+index=9 value=9 address=0xffffc144</pre>
+<h3>Шаг 3. Почему адреса различаются на четыре байта?</h3>
+<p>В обычной Ubuntu AArch64 тип <code>int</code> занимает четыре байта. Проверка:</p>
+<pre>gcc -dM -E -x c /dev/null | grep __SIZEOF_INT__</pre>
+<pre>#define __SIZEOF_INT__ 4</pre>
+<p>Общий размер массива: <strong>10 × 4 = 40 байт</strong>.</p>
+<div class="cells"><div class="cell"><small>[0]</small><b>0</b><small>+0</small></div><div class="cell"><small>[1]</small><b>1</b><small>+4</small></div><div class="cell"><small>[2]</small><b>2</b><small>+8</small></div><div class="cell"><small>[3]</small><b>3</b><small>+12</small></div><div class="cell"><small>[4]</small><b>4</b><small>+16</small></div><div class="cell"><small>[5]</small><b>5</b><small>+20</small></div><div class="cell"><small>[6]</small><b>6</b><small>+24</small></div><div class="cell"><small>[7]</small><b>7</b><small>+28</small></div><div class="cell"><small>[8]</small><b>8</b><small>+32</small></div><div class="cell"><small>[9]</small><b>9</b><small>+36</small></div></div>
+<div class="formula">address(numbers[i]) = base + i × 4</div>
+<p>Например, при базе <code>0x1000</code> адрес <code>numbers[8]</code> равен <code>0x1020</code>. Граница за последним элементом — <code>base + 40</code>.</p>
+<h2>Часть 2. Изменяем массив из AArch64 Assembly</h2>
+<h3>Шаг 4. Создаём Assembly-функцию</h3>
+<pre>nano change.s</pre>
+<pre>.global change_element
+.type change_element, %function
+
+.text
+.align 2
+
+change_element:
+    str w2, [x0, x1, lsl #2]
+    ret
+
+.size change_element, .-change_element</pre>
+<p>Разбор инструкции <code>str w2, [x0, x1, lsl #2]</code>:</p>
+<table><tr><th>Фрагмент</th><th>Смысл</th></tr><tr><td><code>str</code></td><td>Store Register: записать в память</td></tr><tr><td><code>w2</code></td><td>32-битное записываемое значение</td></tr><tr><td><code>x0</code></td><td>Адрес начала массива</td></tr><tr><td><code>x1</code></td><td>Индекс элемента</td></tr><tr><td><code>lsl #2</code></td><td>Сдвиг влево на два бита, то есть умножение индекса на четыре</td></tr></table>
+<p>Функция записывает значение <code>w2</code> по адресу <code>x0 + x1 × 4</code>. По соглашению вызовов AArch64 аргументы передаются в регистрах <code>x0</code>, <code>x1</code>, <code>x2</code>; младшая 32-битная часть третьего аргумента — <code>w2</code>.</p>
+<h3>Шаг 5. Вызываем Assembly из C</h3>
+<p>Перед <code>main</code> добавляем объявление:</p>
+<pre>void change_element(int *arr, long index, int value);</pre>
+<p>После первого цикла печати и до <code>return 0;</code> добавляем:</p>
+<pre>printf("\nCalling Assembly...\n");
+change_element(numbers, 8, 999);
+
+printf("\nAfter Assembly:\n");
+for (int i = 0; i &lt; 10; i++) {
+    printf("index=%d value=%d address=%p\n",
+           i, numbers[i], (void *)&amp;numbers[i]);
+}</pre>
+<p>Компилируем два файла:</p>
+<pre>gcc -Wall -Wextra -O0 -g array.c change.s -o array_demo
+./array_demo</pre>
+<p>До вызова <code>numbers[8] == 8</code>, после вызова <code>numbers[8] == 999</code>. Адрес элемента не меняется: изменяются только его байты.</p>
+<h2>Часть 3. Исследуем память через GDB</h2>
+<h3>Шаг 6. Установка и запуск</h3>
+<pre>sudo apt update
+sudo apt install gdb
+gdb ./array_demo</pre>
+<p>В GDB:</p>
+<pre>(gdb) break main
+(gdb) run</pre>
+<p>Командой <code>next</code> пройдите инициализацию массива, прежде чем исследовать его.</p>
+<pre>(gdb) next
+(gdb) print numbers
+(gdb) print &amp;numbers[0]
+(gdb) print &amp;numbers[9]
+(gdb) x/10dw numbers
+(gdb) x/40xb numbers</pre>
+<p><code>x/10dw</code> показывает десять 4-байтовых слов как десятичные числа; <code>x/40xb</code> — сорок отдельных байтов в шестнадцатеричной форме.</p>
+<p>Чтобы проверить изменение после Assembly, установите breakpoint на строку <em>после</em> вызова <code>change_element</code>, продолжите выполнение и повторите <code>x/10dw numbers</code>. Вместо <code>НомерСтроки</code> подставьте реальную строку из файла:</p>
+<pre>(gdb) break array.c:НомерСтроки
+(gdb) continue
+(gdb) x/10dw numbers</pre>
+<h2>Часть 4. Практикум: меняем numbers[7] на 555 через GDB</h2>
+<p>Теперь исходная постановка задачи: <code>numbers = {0,1,2,3,4,5,6,7,8,9}</code>. Нужно изменить элемент с <strong>индексом 7</strong>, то есть восьмой элемент массива, с <code>7</code> на <code>555</code>.</p>
+<h3>Шаг 1. Собираем программу с отладочной информацией</h3>
+<pre>gcc -g -O0 array.c change.s -o array_demo</pre>
+<p><code>-g</code> сохраняет отладочные сведения; <code>-O0</code> отключает оптимизацию.</p>
+<h3>Шаг 2. Запускаем отладчик</h3>
+<pre>gdb ./array_demo</pre>
+<h3>Шаг 3. Останавливаемся в main</h3>
+<pre>(gdb) break main
+(gdb) run</pre>
+<p><strong>Важно:</strong> если массив инициализируется в цикле, остановка на входе в <code>main</code> произойдёт до заполнения массива. Выполняйте <code>next</code> до завершения цикла. Если массив объявлен с инициализатором <code>int numbers[10] = {0,1,2,3,4,5,6,7,8,9};</code>, также перейдите на строку после объявления.</p>
+<h3>Шаг 4. Печатаем значения</h3>
+<pre>(gdb) print numbers
+$1 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}</pre>
+<h3>Шаг 5. Меняем значение в памяти</h3>
+<pre>(gdb) set var numbers[7] = 555
+(gdb) print numbers
+$2 = {0, 1, 2, 3, 4, 5, 6, 555, 8, 9}</pre>
+<p>Команда <code>set var</code> меняет переменную в памяти отлаживаемого процесса без изменения исходного файла C.</p>
+<h3>Шаг 6. Проверяем адреса и байты</h3>
+<pre>(gdb) print &amp;numbers[7]
+(gdb) x/10dw &amp;numbers[0]</pre>
+<p>Пример вывода (адреса условные):</p>
+<pre>0xffffe120: 0  1  2  3
+0xffffe130: 4  5  6  555
+0xffffe140: 8  9</pre>
+<p>Смотрим четыре байта числа 555:</p>
+<pre>(gdb) x/4xb &amp;numbers[7]</pre>
+<pre>0xffffe13c: 0x2b  0x02  0x00  0x00</pre>
+<p>Почему? <code>555</code> в шестнадцатеричной системе — <code>0x0000022B</code>. В little-endian системе младший байт записан по младшему адресу, поэтому последовательность в памяти — <code>2B 02 00 00</code>.</p>
+<h3>Шаг 7. Продолжаем выполнение</h3>
+<pre>(gdb) continue</pre>
+<p>Теперь программа будет читать <code>555</code> из <code>numbers[7]</code>, пока её собственный код не перезапишет этот элемент.</p>
+<h3>Дополнительный эксперимент: запись по адресу, без имени элемента</h3>
+<p>Способ 1 — арифметика указателей на <code>int</code>:</p>
+<pre>(gdb) set {int}(&amp;numbers[0] + 7) = 555</pre>
+<p>Здесь <code>+ 7</code> означает смещение на семь элементов <code>int</code>, то есть 28 байт.</p>
+<p>Способ 2 — явное байтовое смещение:</p>
+<pre>(gdb) set {int}((char *)&amp;numbers[0] + 28) = 555</pre>
+<div class="formula">base + 7 × 4 = адрес numbers[7]</div>
+<p>Сопоставьте это с инструкцией Assembly <code>str w2, [x0, x1, lsl #2]</code>: оба способа вычисляют адрес по базе и индексу, а затем записывают значение.</p>
+<div class="note"><strong>Замечание для преподавателя:</strong> GDB изменяет память через механизмы отладки Linux, а <code>str</code> выполняет запись из кода самого процесса. Результат изменения байтов одинаков, механизм доступа — разный.</div>
+<h2>Часть 5. Почему нельзя просто запустить вторую программу и изменить чужой массив?</h2>
+<p>Обычные процессы Linux имеют разные виртуальные адресные пространства. Отдельная Assembly-программа не может использовать напечатанный первой C-программой адрес как прямой указатель на её память.</p>
+<p>Для демонстрации с двумя одновременно работающими программами можно использовать <strong>POSIX shared memory</strong>:</p>
+<ol><li>C-программа создаёт именованный участок общей памяти через <code>shm_open</code> и <code>mmap</code>.</li><li>В нём располагается массив из десяти целых чисел.</li><li>C-программа сообщает, что данные готовы, и продолжает работу.</li><li>Отдельная Assembly-программа открывает тот же участок и отображает его в собственное адресное пространство.</li><li>Assembly вычисляет смещение <code>8 × 4 = 32</code> и записывает <code>999</code>.</li><li>C-программа видит новое значение.</li></ol>
+<p>У процессов могут быть разные виртуальные адреса начала отображения. Использовать нужно базовый адрес собственного отображения плюс смещение. Для надёжного обмена также потребуется синхронизация, например POSIX-семафоры.</p>
+<h2>План занятия на 60–90 минут</h2>
+<table><tr><th>Этап</th><th>Время</th><th>Задача</th></tr><tr><td>1. Массив на C</td><td>15 мин</td><td>Заполнение 0–9, печать адресов, размер элемента</td></tr><tr><td>2. Assembly</td><td>20 мин</td><td>Разобрать регистры, <code>str</code>, <code>lsl #2</code>; изменить индекс 8</td></tr><tr><td>3. GDB</td><td>15 мин</td><td>Исследовать 10 слов и 40 байтов в памяти</td></tr><tr><td>4. Самостоятельный опыт</td><td>10 мин</td><td>Изменить индекс 7 на 555, проверить адрес и байты</td></tr><tr><td>5. Продолжение</td><td>по времени</td><td>Обсудить изоляцию процессов и shared memory</td></tr></table>
+<h2>Вопросы студентам</h2>
+<ol><li>Почему адрес <code>numbers[1]</code> на четыре байта больше адреса <code>numbers[0]</code>?</li><li>Как вычислить адрес <code>numbers[7]</code>, если база равна <code>0x1000</code>?</li><li>Почему число 555 в памяти little-endian начинается с байта <code>0x2B</code>?</li><li>Чем отличается <code>numbers[7]</code> от седьмого элемента массива по порядку?</li><li>Почему адрес <code>&amp;numbers[10]</code> допустимо вычислять, но нельзя читать по нему элемент массива?</li><li>Почему отдельный процесс не может использовать указатель первого процесса напрямую?</li></ol>
+<footer>Учебный материал для Ubuntu на AArch64 · C · GNU Assembler · GNU Debugger · Автономная HTML-страница</footer>
+</main></body></html>
